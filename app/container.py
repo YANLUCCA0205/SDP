@@ -12,6 +12,7 @@ from app.config import Settings
 from app.domain.flow import FlowThresholds
 from app.domain.ports import ShiftRepository
 from app.infrastructure.file_store import FileImageStore
+from app.infrastructure.capture_store import CaptureStore
 from app.infrastructure.opencv_codec import OpenCvCodec
 from app.infrastructure.shelf_config import YamlShelfProfiles
 from app.infrastructure.sql_repositories import (
@@ -32,6 +33,7 @@ class Container:
     shelf_profiles: YamlShelfProfiles
     product_detector: YoloDetector
     people_detector: YoloDetector | None
+    captures: CaptureStore | None = None
 
     def load_models(self) -> None:
         self.product_detector.load()
@@ -68,6 +70,7 @@ def build_container(settings: Settings) -> Container:
         shelf_profiles=profiles,
         product_detector=product_detector,
         people_detector=people_detector,
+        captures=CaptureStore(settings.resolve(settings.received_dir), session_factory, settings.max_upload_bytes),
     )
 
 
