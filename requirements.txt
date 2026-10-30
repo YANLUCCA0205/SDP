@@ -1,0 +1,15 @@
+# Python 3.11. Limites inferiores baseados nas APIs usadas (YOLO11 exige ultralytics>=8.3.0).
+# As versões exatas não puderam ser verificadas no ambiente de desenvolvimento: após instalar, rode
+# `pip freeze > requirements.lock` para registrar as versões que funcionaram na sua máquina.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pydantic>=2.7
+pydantic-settings>=2.3
+sqlalchemy>=2.0
+ultralytics>=8.3.0
+opencv-python-headless>=4.9
+numpy>=1.26
+pandas>=2.2
+pyyaml>=6.0
+tzdata>=2024.1

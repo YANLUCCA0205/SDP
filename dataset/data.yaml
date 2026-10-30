@@ -1,0 +1,16 @@
+# Configuração do dataset no formato Ultralytics YOLO11 (TCC, seções 2.5-a e 5.1).
+#
+# ATENÇÃO: os nomes abaixo são PROVISÓRIOS. O TCC fala em três produtos do experimento, sem nomeá-los.
+# Substitua `names` pelos produtos reais, na ordem dos índices usados nos arquivos de rótulo (.txt).
+# Os mesmos nomes devem ser usados em `class_name` no arquivo config/shelves.yaml.
+#
+# Os scripts de treino e avaliação convertem `path` para caminho absoluto automaticamente.
+path: .
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: produto_1
+  1: produto_2
+  2: produto_3

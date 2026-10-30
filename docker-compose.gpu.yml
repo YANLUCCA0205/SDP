@@ -1,0 +1,19 @@
+# Override para GPU NVIDIA (requer NVIDIA Container Toolkit no host).
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml build --build-arg TORCH_INDEX_URL=https://pypi.org/simple
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Defina SDP_DEVICE=0 no .env.
+services:
+  api:
+    build:
+      context: .
+      args:
+        TORCH_INDEX_URL: https://pypi.org/simple
+    image: sdp:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

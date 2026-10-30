@@ -1,0 +1,19 @@
+services:
+  api:
+    build: .
+    image: sdp:latest
+    container_name: sdp-api
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      # Os caminhos dentro do contêiner são os mesmos do .env.example (relativos a /app).
+      SDP_TIMEZONE: ${SDP_TIMEZONE:-America/Sao_Paulo}
+    volumes:
+      - ./models:/app/models          # pesos (yolo11n.pt / best.pt)
+      - ./config:/app/config          # config/shelves.yaml
+      - ./data:/app/data              # banco SQLite
+      - ./received:/app/received      # imagens recebidas
+      - ./results:/app/results        # imagens anotadas
+    restart: unless-stopped

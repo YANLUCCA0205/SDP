@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+runs/
+
+# Dados gerados em execução
+data/*
+!data/.gitkeep
+received/*
+!received/.gitkeep
+results/*
+!results/.gitkeep
+
+# Pesos (grandes): versione apenas se for deliberado
+models/*.pt
+!models/.gitkeep
+
+# Dataset real (imagens e rótulos); mantém a estrutura e o data.yaml
+dataset/images/*/*
+dataset/labels/*/*
+!dataset/images/*/.gitkeep
+!dataset/labels/*/.gitkeep

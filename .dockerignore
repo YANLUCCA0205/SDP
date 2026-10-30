@@ -1,0 +1,12 @@
+.venv
+.git
+__pycache__
+*.pyc
+.env
+runs
+data
+received
+results
+dataset/images
+dataset/labels
+tests

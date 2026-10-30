@@ -1,0 +1,22 @@
+# Perfil de gôndola por câmera. Cada câmera aponta para UMA gôndola (corredor).
+#
+# aisle     : corredor da câmera (aparece no relatório de rupturas).
+# class_name: nome da classe no modelo YOLO (deve existir em `names` do dataset/data.yaml).
+# category  : grupo do produto (ex.: Bebidas, Mercearia).
+# capacity  : máximo de unidades do produto visíveis na gôndola quando cheia.
+#
+# Regra: a gôndola deve estar com ao menos SDP_MIN_OCCUPANCY (padrão 60%) da capacidade.
+# Mínimo esperado = ceil(capacity * 0.6). Contagem abaixo do mínimo = possível ruptura.
+#
+# EXEMPLO COM VALORES PROVISÓRIOS: substitua pelos produtos, corredores e capacidades reais.
+# Enquanto o modelo carregado não conhecer a classe (ex.: yolo11n.pt genérico), o produto não é avaliado.
+cameras:
+  cam-01:
+    aisle: C10
+    products:
+      - {class_name: produto_1, category: Categoria A, capacity: 10}
+      - {class_name: produto_2, category: Categoria A, capacity: 8}
+  cam-02:
+    aisle: C11
+    products:
+      - {class_name: produto_3, category: Categoria B, capacity: 12}
