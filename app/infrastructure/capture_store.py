@@ -52,9 +52,9 @@ class CaptureStore:
         if not data or len(data) > self.max_bytes:
             raise ValueError("Imagem vazia ou acima do limite")
         # Confirma conteúdo real, não somente o cabeçalho informado pelo cliente.
-        if content_type == "image/jpeg" and not data.startswith(b"\\xff\\xd8\\xff"):
+        if content_type == "image/jpeg" and not data.startswith(b"\xff\xd8\xff"):
             raise ValueError("Conteúdo não corresponde a JPEG")
-        if content_type == "image/png" and not data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+        if content_type == "image/png" and not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise ValueError("Conteúdo não corresponde a PNG")
         image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None:
