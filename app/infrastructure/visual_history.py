@@ -131,6 +131,38 @@ def _patterns(reference):
     return groups
 
 
+
+def _align_to_reference(reference, current):
+    """Registra a captura sobre a referência usando movimento translacional.
+    
+    Retorna None quando a câmera mudou demais ou o registro falhou.
+    """
+    ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
+    cur_gray = cv2.cvtColor(current, cv2.COLOR_BGR2GRAY)
+    # Redução de escala torna o ECC mais estável para JPEG da ESP32-CAM.
+    size = (max(80, reference.shape[1] // 2), max(60, reference.shape[0] // 2))
+    a = cv2.resize(ref_gray, size).astype(np.float32) / 255.0
+    b = cv2.resize(cur_gray, size).astype(np.float32) / 255.0
+    warp = np.eye(2, 3, dtype=np.float32)
+    try:
+        corr, warp = cv2.findTransformECC(
+            a, b, warp, cv2.MOTION_TRANSLATION,
+            (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 80, 1e-5),
+            None, 3)
+    except cv2.error:
+        return None
+    warp[0, 2] *= reference.shape[1] / size[0]
+    warp[1, 2] *= reference.shape[0] / size[1]
+    shift_x, shift_y = float(warp[0, 2]), float(warp[1, 2])
+    if not np.isfinite(corr) or corr < .60 or abs(shift_x) > 25 or abs(shift_y) > 25:
+        return None
+    aligned = cv2.warpAffine(
+        current, warp, (reference.shape[1], reference.shape[0]),
+        flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+        borderMode=cv2.BORDER_REPLICATE)
+    return aligned, round(corr, 3), [round(shift_x, 2), round(shift_y, 2)]
+
+
 class VisualHistory:
     def __init__(self, directory: Path, detector):
         self.directory = directory
@@ -178,18 +210,26 @@ class VisualHistory:
             return {"status": "resolucao_diferente", "tem_ruptura": None, "rupturas": [],
                     "motivo": "Referência e captura devem ter a mesma resolução"}
 
-        # A mesma imagem (ou uma recompactação quase idêntica) jamais deve
-        # produzir "ruptura" por diferenças aleatórias do detector.
+        # Normalização geométrica: comparar a mesma posição antes/depois.
+        # Reexecutamos o detector sobre a imagem alinhada para não misturar
+        # caixas originais com coordenadas do histórico.
+        registration = _align_to_reference(image, current_image)
+        if registration is None:
+            return {"status": "indeterminado", "tem_ruptura": None, "rupturas": [],
+                    "motivo": "Não foi possível alinhar a câmera com o histórico"}
+        aligned, registration_score, deslocamento = registration
+
         global_diff = float(np.median(np.abs(
-            image.astype(np.float32) - current_image.astype(np.float32))))
+            image.astype(np.float32) - aligned.astype(np.float32))))
         ref = _objects(image, self.detector.detect(image))
-        cur = _objects(current_image, current_detections)
         if not ref:
             return {"status": "referencia_sem_deteccoes", "tem_ruptura": None, "rupturas": []}
         if global_diff < 2.5:
             return {"status": "ok", "tem_ruptura": False, "rupturas": [],
-                    "objetos_referencia": len(ref), "objetos_atuais": len(cur),
-                    "objetos_sem_tipo": 0, "observacao": "Cena equivalente ao histórico"}
+                    "objetos_referencia": len(ref), "objetos_atuais": len(ref),
+                    "objetos_sem_tipo": 0, "deslocamento_pixels": deslocamento,
+                    "observacao": "Cena equivalente ao histórico"}
+        cur = _objects(aligned, self.detector.detect(aligned))
 
         _shelves(ref, cur)
         matches, used = _match(ref, cur)
@@ -199,7 +239,7 @@ class VisualHistory:
         for i, obj in enumerate(ref):
             if i in matches:
                 continue
-            change = _patch_difference(image, current_image, obj["box"])
+            change = _patch_difference(image, aligned, obj["box"])
             # Sem mudança real no local, a falta de detecção não é ruptura.
             if change < 12:
                 continue
@@ -235,5 +275,7 @@ class VisualHistory:
                 "objetos_atuais": len(cur),
                 "objetos_sem_tipo": len(cur) - len(used),
                 "regioes_incertas": uncertain,
+                "confianca_alinhamento": registration_score,
+                "deslocamento_pixels": deslocamento,
                 "observacao": "Rupturas estimadas por comparação espacial e visual. "
                               "Atribuição é por padrão visual, não por SKU."}
