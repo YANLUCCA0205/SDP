@@ -154,7 +154,7 @@ class VisualHistory:
         with self.lock:
             # Mantém os bytes originais JPEG para comparações repetíveis.
             # PNG também é aceito e convertido para JPEG.
-            if data[:2] == b"\\xff\\xd8":
+            if data[:2] == bytes((255, 216)):
                 self._path(camera_id).write_bytes(data)
             else:
                 ok, jpg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 98])
