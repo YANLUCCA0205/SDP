@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     )
 
     # Modelo. Trocar yolo11n.pt (provisório) por best.pt = apontar SDP_MODEL_PATH para os pesos treinados.
-    model_path: Path = Path("models/yolo11n.pt")
+    model_path: Path = Path("models/best.pt")
     confidence: float = Field(default=0.25, ge=0, le=1)  # TCC 6.2
     imgsz: int = Field(default=640, gt=0)
     device: str | None = None  # "cpu", "0", "cuda:0"... None = automático
