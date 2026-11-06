@@ -43,3 +43,27 @@ def test_temporal_multishelf_with_yolo_hook(tmp_path: Path):
     assert detector.calls == 3
     assert Path(result["csv"]).is_file()
     assert len(list((tmp_path / "results" / "temporal" / "cam-01" / "2026-11-03").glob("*_mascara.png"))) == 3
+
+
+def test_distinct_locations_do_not_confirm_same_rupture(tmp_path: Path):
+    root = tmp_path / "received"
+    photo_dir = root / "cam-01" / "2026-11-03"
+    photo_dir.mkdir(parents=True)
+    original = np.full((480, 640, 3), 200, dtype=np.uint8)
+    left = original.copy()
+    left[285:345, 80:150] = 10
+    right = original.copy()
+    right[285:345, 350:420] = 10
+    for prefix, image in (("221525", original), ("221557", left), ("221802", right)):
+        assert cv2.imwrite(str(photo_dir / f"{prefix}_fixture.jpg"), image)
+    config = tmp_path / "shelves.yaml"
+    config.write_text("cameras:\\n  cam-01:\\n    terceira: [0.03, 0.56, 0.90, 0.76]\\n",
+                      encoding="utf-8")
+    result = analyze_history(
+        camera_id="cam-01", day="2026-11-03", reference_prefix="221525",
+        received_root=root, results_root=tmp_path / "results",
+        config_path=config,
+    )
+    assert [row["status"] for row in result["readings"]] == [
+        "SEM_ALERTA", "SUSPEITA", "SUSPEITA"
+    ]
