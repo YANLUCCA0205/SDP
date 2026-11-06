@@ -22,3 +22,6 @@ dataset/images/*/*
 dataset/labels/*/*
 !dataset/images/*/.gitkeep
 !dataset/labels/*/.gitkeep
+
+# Capturas copiadas para anotacao (dados reais privados)
+dataset/to_annotate/
