@@ -114,13 +114,12 @@ def analyze_history(*, camera_id: str, day: str, reference_prefix: str,
             for box in boxes:
                 cv2.rectangle(annotated, (box["x1"], box["y1"]),
                               (box["x2"], box["y2"]), (0, 0, 255), 2)
-            shelves.append({"shelf": name, "status": status, "regions": boxes})
             rows.append({"capture": photo.name, "shelf": name,
-                         "status": status, "regions": len(boxes)})
+                         "status": status, "regions": len(boxes),
+                         "yolo_detections": len(detections)})
         cv2.imwrite(str(output / f"{photo.stem}_analise.jpg"), annotated)
         cv2.imwrite(str(output / f"{photo.stem}_mascara.png"), full_mask)
         # Nao transforma objeto COCO em produto do supermercado.
-        rows[-1]["yolo_detections"] = len(detections)
     csv_path = output / "analise.csv"
     with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=["capture", "shelf", "status", "regions", "yolo_detections"],
