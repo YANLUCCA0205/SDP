@@ -3,11 +3,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
+import cv2
+import numpy as np
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from app.api.schemas import AnalyzeResponse, ShiftIn, ShiftOut
-from app.application.analyze_image import AnalyzeRequest
+from app.application.analyze_image import AnalyzeRequest, CAMERA_ID_PATTERN
 from app.application.errors import InvalidImageError, ModelUnavailableError
 from app.container import Container
 from app.domain.shift import Shift
@@ -48,12 +51,12 @@ def health(container: ContainerDep) -> dict[str, Any]:
     }
 
 
-@router.post("/analyze", response_model=AnalyzeResponse, summary="Recebe uma imagem e retorna as detecções")
+@router.post("/analyze", summary="Detecção e ruptura visual por histórico")
 async def analyze(
     container: ContainerDep,
     file: UploadFile = File(...),
     camera_id: str | None = Query(None, description="Identificador da câmera; padrão SDP_DEFAULT_CAMERA_ID"),
-) -> AnalyzeResponse:
+) -> dict[str, Any]:
     camera_id = camera_id or container.settings.default_camera_id
     max_bytes = container.settings.max_upload_bytes
     data = await file.read(max_bytes + 1)
@@ -72,7 +75,32 @@ async def analyze(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ModelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return AnalyzeResponse.from_result(result)
+    output = AnalyzeResponse.from_result(result).model_dump()
+    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    output["ruptura_visual"] = await run_in_threadpool(
+        container.visual_history.analyze, camera_id, image, result.detections
+    )
+    return output
+
+
+@router.post("/reference", summary="Define imagem histórica da gôndola abastecida")
+async def reference(
+    container: ContainerDep,
+    file: UploadFile = File(...),
+    camera_id: str | None = Query(None),
+) -> dict[str, Any]:
+    camera_id = camera_id or container.settings.default_camera_id
+    if not CAMERA_ID_PATTERN.fullmatch(camera_id):
+        raise HTTPException(status_code=400, detail="camera_id inválido")
+    if file.content_type not in ("image/jpeg", "image/png"):
+        raise HTTPException(status_code=400, detail="Envie JPEG ou PNG")
+    data = await file.read(container.settings.max_upload_bytes + 1)
+    if len(data) > container.settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="Imagem acima do limite")
+    try:
+        return await run_in_threadpool(container.visual_history.save_reference, camera_id, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/ruptures", summary="Lista eventos de ruptura")
