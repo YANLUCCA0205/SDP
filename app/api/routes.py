@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Any
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -119,7 +120,7 @@ async def analyze_capture_history(
             reference_prefix=reference_prefix,
             received_root=container.settings.resolve(container.settings.received_dir),
             results_root=container.settings.resolve(container.settings.results_dir),
-            config_path=container.settings.resolve(__import__("pathlib").Path("config/temporal_shelves.yaml")),
+            config_path=container.settings.resolve(Path("config/temporal_shelves.yaml")),
             detector=container.product_detector,
         )
     except ValueError as exc:
