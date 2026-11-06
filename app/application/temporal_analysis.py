@@ -89,7 +89,7 @@ def analyze_history(*, camera_id: str, day: str, reference_prefix: str,
     output.mkdir(parents=True, exist_ok=True)
     codec = OpenCvCodec()
     reference_lab = cv2.GaussianBlur(cv2.cvtColor(reference, cv2.COLOR_BGR2LAB)[:, :, 0], (5, 5), 0)
-    counts = {name: 0 for name in bands}
+    # Persistencia por posicao: nao confirmar regioes diferentes na mesma prateleira.\n    previous_masks: dict[str, np.ndarray] = {}
     rows = []
     for photo in photos:
         image = cv2.imread(str(photo))
@@ -100,13 +100,26 @@ def analyze_history(*, camera_id: str, day: str, reference_prefix: str,
         detections = detector.detect(image) if detector is not None and detector.is_available else []
         annotated = codec.annotate(image, detections)
         full_mask = np.zeros(reference.shape[:2], np.uint8)
-        shelves = []
         for name, rect in bands.items():
             mask, boxes = _mask(reference_lab, now_lab, rect)
             x1, y1, x2, y2 = rect
             full_mask[y1:y2, x1:x2] = np.maximum(full_mask[y1:y2, x1:x2], mask)
-            counts[name] = counts[name] + 1 if boxes else 0
-            status = ("PERSISTENTE" if counts[name] >= 2 else
+            previous = previous_masks.get(name)
+            persistent_boxes = []
+            if previous is not None:
+                # Compara sobreposicao espacial, tolerando poucos pixels de movimento.
+                expanded = cv2.dilate(previous, np.ones((9, 9), np.uint8))
+                for box in boxes:
+                    rx1, ry1 = box["x1"] - x1, box["y1"] - y1
+                    rx2, ry2 = box["x2"] - x1, box["y2"] - y1
+                    current_region = mask[ry1:ry2, rx1:rx2] > 0
+                    previous_region = expanded[ry1:ry2, rx1:rx2] > 0
+                    overlap = int(np.count_nonzero(current_region & previous_region))
+                    pixels = int(np.count_nonzero(current_region))
+                    if pixels and overlap / pixels >= 0.35:
+                        persistent_boxes.append(box)
+            previous_masks[name] = mask
+            status = ("PERSISTENTE" if persistent_boxes else
                       "SUSPEITA" if boxes else "SEM_ALERTA")
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 170, 0), 1)
             cv2.putText(annotated, name, (x1 + 2, y1 + 13), cv2.FONT_HERSHEY_SIMPLEX,
@@ -116,13 +129,14 @@ def analyze_history(*, camera_id: str, day: str, reference_prefix: str,
                               (box["x2"], box["y2"]), (0, 0, 255), 2)
             rows.append({"capture": photo.name, "shelf": name,
                          "status": status, "regions": len(boxes),
-                         "yolo_detections": len(detections)})
+                         "yolo_detections": len(detections),
+                         "persistent_regions": len(persistent_boxes)})
         cv2.imwrite(str(output / f"{photo.stem}_analise.jpg"), annotated)
         cv2.imwrite(str(output / f"{photo.stem}_mascara.png"), full_mask)
         # Nao transforma objeto COCO em produto do supermercado.
     csv_path = output / "analise.csv"
     with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["capture", "shelf", "status", "regions", "yolo_detections"],
+        writer = csv.DictWriter(handle, fieldnames=["capture", "shelf", "status", "regions", "yolo_detections", "persistent_regions"],
                                 delimiter=";", extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
@@ -130,5 +144,5 @@ def analyze_history(*, camera_id: str, day: str, reference_prefix: str,
             "reference": reference_file.name, "processed_captures": len(rows) // len(bands),
             "model_loaded": bool(detector is not None and detector.is_available),
             "results_dir": str(output), "csv": str(csv_path),
-            "warning": "PERSISTENTE indica alteracao visual em 2 capturas; nao comprova ruptura nem SKU.",
+            "warning": "PERSISTENTE requer sobreposicao espacial entre duas capturas; nao comprova ruptura nem SKU.",
             "readings": rows}
