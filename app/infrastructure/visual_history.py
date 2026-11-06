@@ -1,16 +1,134 @@
-"""Comparação de ruptura por padrão visual entre referência e captura atual.
+"""Compara produtos por posição física e aparência no histórico da câmera fixa.
 
-Não atribui nomes comerciais: padrao_N é a identidade visual inferida.
-Referência deve ser da mesma câmera fixa e gôndola abastecida.
+Uma detecção isolada não prova ruptura: caixas ausentes exigem mudança visual
+real na mesma posição. O modelo YOLO reconhece "object"; os IDs de padrões
+são identificadores visuais, não nomes comerciais/SKUs.
 """
 from __future__ import annotations
 
 import threading
-from collections import Counter
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+
+def _iou(a, b):
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    area_a = max(1, (a[2] - a[0]) * (a[3] - a[1]))
+    area_b = max(1, (b[2] - b[0]) * (b[3] - b[1]))
+    return intersection / max(1, area_a + area_b - intersection)
+
+
+def _objects(image, detections):
+    height, width = image.shape[:2]
+    objects = []
+    for d in sorted(detections, key=lambda x: x.confidence, reverse=True):
+        b = d.bbox
+        box = [max(0, int(b.x1)), max(0, int(b.y1)),
+               min(width, int(b.x2)), min(height, int(b.y2))]
+        if box[2] - box[0] < 8 or box[3] - box[1] < 8:
+            continue
+        # Deduplicação apenas de caixas muito sobrepostas; produtos lado a lado
+        # não devem ser fundidos.
+        if any(_iou(box, other["box"]) >= .65 for other in objects):
+            continue
+        crop = image[box[1]:box[3], box[0]:box[2]]
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        hist = cv2.calcHist([hsv], [0, 1], None, [16, 16],
+                            [0, 180, 0, 256]).flatten()
+        hist /= np.linalg.norm(hist) + 1e-8
+        objects.append({"box": box, "x": (box[0]+box[2])/(2*width),
+                        "y": (box[1]+box[3])/(2*height),
+                        "class": d.class_name, "feature": hist})
+    return objects
+
+
+def _shelves(reference, current):
+    """Agrupa por linhas visíveis de produtos, sem supor número de prateleiras."""
+    if not reference:
+        return
+    ys = sorted(obj["y"] for obj in reference)
+    groups = [[ys[0]]]
+    for y in ys[1:]:
+        if y - float(np.median(groups[-1])) <= .055:
+            groups[-1].append(y)
+        else:
+            groups.append([y])
+    centers = [float(np.median(group)) for group in groups]
+    boundaries = [(a + b)/2 for a, b in zip(centers, centers[1:])]
+    for item in reference + current:
+        item["shelf"] = 1 + int(np.searchsorted(boundaries, item["y"]))
+
+
+def _match(reference, current):
+    """Correspondência espacial única: nenhum objeto atual serve para dois."""
+    candidates = []
+    for ri, ref in enumerate(reference):
+        rb = ref["box"]
+        rw = rb[2] - rb[0]
+        rh = rb[3] - rb[1]
+        for ci, obj in enumerate(current):
+            if ref["class"] != obj["class"] or ref["shelf"] != obj["shelf"]:
+                continue
+            overlap = _iou(rb, obj["box"])
+            dx = abs(ref["x"] - obj["x"])
+            dy = abs(ref["y"] - obj["y"])
+            # A referência da câmera é fixa, logo o mesmo item deve ficar
+            # na mesma posição. Tolerância pequena a deslocamentos da caixa.
+            if overlap < .18 and (dx > .025 or dy > .035):
+                continue
+            resemblance = float(ref["feature"] @ obj["feature"])
+            score = 2 * overlap + .35 * resemblance - 2 * dx - 2 * dy
+            candidates.append((score, ri, ci))
+    matches = {}
+    assigned_current = set()
+    for score, ri, ci in sorted(candidates, reverse=True):
+        if ri not in matches and ci not in assigned_current:
+            matches[ri] = ci
+            assigned_current.add(ci)
+    return matches, assigned_current
+
+
+def _patch_difference(reference, current, box):
+    """Mede alteração real na região que antes continha o produto."""
+    x1, y1, x2, y2 = box
+    w, h = x2 - x1, y2 - y1
+    margin_x, margin_y = max(1, int(w * .12)), max(1, int(h * .12))
+    x1, x2 = x1 + margin_x, x2 - margin_x
+    y1, y2 = y1 + margin_y, y2 - margin_y
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    a = cv2.GaussianBlur(reference[y1:y2, x1:x2], (5, 5), 0)
+    b = cv2.GaussianBlur(current[y1:y2, x1:x2], (5, 5), 0)
+    # Mediana reduz a influência de ruído JPEG ou reflexos em poucos pixels.
+    return float(np.median(np.abs(a.astype(np.float32) - b.astype(np.float32))))
+
+
+def _patterns(reference):
+    """Identidades agrupadas por aparência, dentro de cada prateleira."""
+    prototypes = []
+    groups = []
+    for item in reference:
+        compatible = [(float(item["feature"] @ proto["feature"]), j)
+                      for j, proto in enumerate(prototypes)
+                      if item["shelf"] == proto["shelf"] and
+                      item["class"] == proto["class"]]
+        if compatible and max(compatible)[0] >= .92:
+            index = max(compatible)[1]
+            groups.append(index)
+            proto = prototypes[index]
+            proto["members"].append(item["feature"])
+            vector = np.mean(proto["members"], axis=0)
+            proto["feature"] = vector / (np.linalg.norm(vector) + 1e-8)
+        else:
+            groups.append(len(prototypes))
+            prototypes.append({"shelf": item["shelf"], "class": item["class"],
+                               "feature": item["feature"].copy(),
+                               "members": [item["feature"]]})
+    return groups
 
 
 class VisualHistory:
@@ -20,7 +138,7 @@ class VisualHistory:
         self.lock = threading.RLock()
         directory.mkdir(parents=True, exist_ok=True)
 
-    def _path(self, camera_id: str) -> Path:
+    def _path(self, camera_id):
         return self.directory / f"{camera_id}.jpg"
 
     def save_reference(self, camera_id: str, data: bytes) -> dict:
@@ -30,58 +148,21 @@ class VisualHistory:
         if not self.detector.is_available:
             raise ValueError("Modelo de produtos indisponível")
         detections = self.detector.detect(image)
-        if not detections:
-            raise ValueError("A referência não contém objetos detectados")
+        objects = _objects(image, detections)
+        if not objects:
+            raise ValueError("A referência não contém produtos detectados")
         with self.lock:
-            ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 96])
-            if not ok:
-                raise ValueError("Falha ao codificar referência")
-            self._path(camera_id).write_bytes(buf.tobytes())
-        return {"camera_id": camera_id, "referencia_salva": True,
-                "objetos_referencia": len(detections)}
-
-    @staticmethod
-    def _features(image: np.ndarray, detections) -> list[dict]:
-        h, w = image.shape[:2]
-        items = []
-        for d in detections:
-            b = d.bbox
-            x1, y1, x2, y2 = max(0, int(b.x1)), max(0, int(b.y1)), min(w, int(b.x2)), min(h, int(b.y2))
-            if x2 - x1 < 6 or y2 - y1 < 6:
-                continue
-            crop = image[y1:y2, x1:x2]
-            hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-            hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256]).flatten()
-            hist /= np.linalg.norm(hist) + 1e-8
-            lab = cv2.cvtColor(cv2.resize(crop, (8, 8)), cv2.COLOR_BGR2LAB)
-            shape = lab[:, :, 1:].astype(np.float32).flatten() / 255.0
-            shape -= shape.mean()
-            shape /= np.linalg.norm(shape) + 1e-8
-            feature = np.concatenate((hist * .8, shape * .2))
-            feature /= np.linalg.norm(feature) + 1e-8
-            items.append({"box": [x1, y1, x2, y2], "x": (x1+x2)/2 / w,
-                          "y": (y1+y2)/2 / h, "f": feature, "class": d.class_name})
-        return items
-
-    @staticmethod
-    def _shelf_groups(ref: list[dict], cur: list[dict]) -> None:
-        if not ref:
-            return
-        centers = sorted(r["y"] for r in ref)
-        heights = [r["box"][3] - r["box"][1] for r in ref]
-        # Normalização da altura é efetuada a partir da própria imagem.
-        image_h = max(1, max(r["box"][3] for r in ref))
-        tolerance = max(.025, float(np.median(heights)) / image_h * .65)
-        rows = [[centers[0]]]
-        for y in centers[1:]:
-            if y - float(np.mean(rows[-1])) < tolerance:
-                rows[-1].append(y)
+            # Mantém os bytes originais JPEG para comparações repetíveis.
+            # PNG também é aceito e convertido para JPEG.
+            if data[:2] == b"\\xff\\xd8":
+                self._path(camera_id).write_bytes(data)
             else:
-                rows.append([y])
-        marks = [float(np.mean(v)) for v in rows]
-        cuts = [(a+b)/2 for a, b in zip(marks, marks[1:])]
-        for item in ref + cur:
-            item["shelf"] = 1 + int(np.searchsorted(cuts, item["y"]))
+                ok, jpg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 98])
+                if not ok:
+                    raise ValueError("Falha ao codificar referência")
+                self._path(camera_id).write_bytes(jpg.tobytes())
+        return {"camera_id": camera_id, "referencia_salva": True,
+                "objetos_referencia": len(objects)}
 
     def analyze(self, camera_id: str, current_image: np.ndarray, current_detections) -> dict:
         path = self._path(camera_id)
@@ -89,51 +170,70 @@ class VisualHistory:
             if not path.is_file():
                 return {"status": "sem_referencia", "tem_ruptura": None, "rupturas": [],
                         "motivo": "Cadastre uma imagem histórica em POST /reference"}
-            image = cv2.imdecode(np.frombuffer(path.read_bytes(), dtype=np.uint8), cv2.IMREAD_COLOR)
+            image = cv2.imdecode(np.frombuffer(path.read_bytes(), dtype=np.uint8),
+                                 cv2.IMREAD_COLOR)
         if image is None:
             return {"status": "referencia_invalida", "tem_ruptura": None, "rupturas": []}
         if image.shape[:2] != current_image.shape[:2]:
             return {"status": "resolucao_diferente", "tem_ruptura": None, "rupturas": [],
-                    "motivo": "Referência e captura precisam ter a mesma resolução"}
-        ref = self._features(image, self.detector.detect(image))
-        cur = self._features(current_image, current_detections)
+                    "motivo": "Referência e captura devem ter a mesma resolução"}
+
+        # A mesma imagem (ou uma recompactação quase idêntica) jamais deve
+        # produzir "ruptura" por diferenças aleatórias do detector.
+        global_diff = float(np.median(np.abs(
+            image.astype(np.float32) - current_image.astype(np.float32))))
+        ref = _objects(image, self.detector.detect(image))
+        cur = _objects(current_image, current_detections)
         if not ref:
             return {"status": "referencia_sem_deteccoes", "tem_ruptura": None, "rupturas": []}
-        self._shelf_groups(ref, cur)
-        prototypes: list[dict] = []
-        # Grupos de produtos por aparência dentro de cada prateleira.
-        for item in sorted(ref, key=lambda x: (x["shelf"], x["x"])):
-            sims = [(float(item["f"] @ p["feature"]), j)
-                    for j, p in enumerate(prototypes)
-                    if item["shelf"] == p["shelf"] and item["class"] == p["class"]]
-            if sims and max(sims)[0] >= .88:
-                p = prototypes[max(sims)[1]]
-                p["items"].append(item)
-                vec = np.mean([x["f"] for x in p["items"]], axis=0)
-                p["feature"] = vec / (np.linalg.norm(vec) + 1e-8)
-            else:
-                prototypes.append({"shelf": item["shelf"], "class": item["class"],
-                                   "feature": item["f"].copy(), "items": [item]})
-        observed = Counter()
-        unknown = 0
-        for item in cur:
-            sims = [(float(item["f"] @ p["feature"]), j) for j, p in enumerate(prototypes)
-                    if item["shelf"] == p["shelf"] and item["class"] == p["class"]]
-            if sims and max(sims)[0] >= .77:
-                observed[max(sims)[1]] += 1
-            else:
-                unknown += 1
-        ruptures = []
-        for j, p in enumerate(prototypes):
-            expected, found = len(p["items"]), observed[j]
-            if found >= expected:
+        if global_diff < 2.5:
+            return {"status": "ok", "tem_ruptura": False, "rupturas": [],
+                    "objetos_referencia": len(ref), "objetos_atuais": len(cur),
+                    "objetos_sem_tipo": 0, "observacao": "Cena equivalente ao histórico"}
+
+        _shelves(ref, cur)
+        matches, used = _match(ref, cur)
+        patterns = _patterns(ref)
+        missing = {}
+        uncertain = 0
+        for i, obj in enumerate(ref):
+            if i in matches:
                 continue
-            ruptures.append({"produto": f"padrao_{j+1:03d}", "prateleira": p["shelf"],
-                             "esperado": expected, "encontrado": found, "faltando": expected-found,
-                             "posicoes_historicas": [r["box"] for r in p["items"]]})
-        # Objetos atuais não associados tornam o resultado incerto para evitar falso positivo.
-        status = "indeterminado" if unknown else "ok"
-        return {"status": status, "tem_ruptura": bool(ruptures) if not unknown else None,
+            change = _patch_difference(image, current_image, obj["box"])
+            # Sem mudança real no local, a falta de detecção não é ruptura.
+            if change < 12:
+                continue
+            # Não confirmar como ruptura se um outro objeto atual cobre a
+            # região: pode ter mudado a embalagem, posição ou classificação.
+            occupied = any(_iou(obj["box"], other["box"]) >= .20 for other in cur)
+            if occupied:
+                uncertain += 1
+                continue
+            pattern_id = patterns[i]
+            missing.setdefault(pattern_id, []).append(
+                {"box": obj["box"], "alteracao_visual": round(change, 2)})
+        counts = {}
+        for i, pattern_id in enumerate(patterns):
+            counts[pattern_id] = counts.get(pattern_id, 0) + 1
+        ruptures = []
+        for pattern_id, positions in sorted(missing.items()):
+            ruptures.append({
+                "produto": f"padrao_{pattern_id+1:03d}",
+                "prateleira": next(ref[i]["shelf"] for i in range(len(ref))
+                                   if patterns[i] == pattern_id),
+                "esperado": counts[pattern_id],
+                "encontrado": max(0, counts[pattern_id] - len(positions)),
+                "faltando": len(positions),
+                "posicoes_historicas": [position["box"] for position in positions],
+            })
+        # A ausência de detecção com mudança de cena não confirma remoção.
+        # Expor uma decisão positiva somente para regiões claras, sem objetos.
+        status = "indeterminado" if uncertain else "ok"
+        return {"status": status,
+                "tem_ruptura": None if uncertain else bool(ruptures),
                 "rupturas": ruptures, "objetos_referencia": len(ref),
-                "objetos_atuais": len(cur), "objetos_sem_tipo": unknown,
-                "observacao": "Comparação visual aproximada; caixas históricas não são coordenadas de falta confirmada."}
+                "objetos_atuais": len(cur),
+                "objetos_sem_tipo": len(cur) - len(used),
+                "regioes_incertas": uncertain,
+                "observacao": "Rupturas estimadas por comparação espacial e visual. "
+                              "Atribuição é por padrão visual, não por SKU."}
