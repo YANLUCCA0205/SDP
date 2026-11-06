@@ -1,0 +1,8 @@
+# Regioes normalizadas [x1,y1,x2,y2] da camera fixa cam-01.
+# Ajustar e validar para cada nova posicao de camera.
+cameras:
+  cam-01:
+    superior: [0.034, 0.140, 0.894, 0.308]
+    segunda: [0.034, 0.344, 0.895, 0.519]
+    terceira: [0.034, 0.567, 0.886, 0.754]
+    inferior: [0.034, 0.806, 0.887, 0.910]
