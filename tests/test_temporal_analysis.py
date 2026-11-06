@@ -57,7 +57,7 @@ def test_distinct_locations_do_not_confirm_same_rupture(tmp_path: Path):
     for prefix, image in (("221525", original), ("221557", left), ("221802", right)):
         assert cv2.imwrite(str(photo_dir / f"{prefix}_fixture.jpg"), image)
     config = tmp_path / "shelves.yaml"
-    config.write_text("cameras:\\n  cam-01:\\n    terceira: [0.03, 0.56, 0.90, 0.76]\\n",
+    config.write_text("cameras:\n  cam-01:\n    terceira: [0.03, 0.56, 0.90, 0.76]\n",
                       encoding="utf-8")
     result = analyze_history(
         camera_id="cam-01", day="2026-11-03", reference_prefix="221525",
