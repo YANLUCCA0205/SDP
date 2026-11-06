@@ -89,7 +89,8 @@ def analyze_history(*, camera_id: str, day: str, reference_prefix: str,
     output.mkdir(parents=True, exist_ok=True)
     codec = OpenCvCodec()
     reference_lab = cv2.GaussianBlur(cv2.cvtColor(reference, cv2.COLOR_BGR2LAB)[:, :, 0], (5, 5), 0)
-    # Persistencia por posicao: nao confirmar regioes diferentes na mesma prateleira.\n    previous_masks: dict[str, np.ndarray] = {}
+    # Persistencia por posicao: nao confirmar regioes diferentes na mesma prateleira.
+    previous_masks: dict[str, np.ndarray] = {}
     rows = []
     for photo in photos:
         image = cv2.imread(str(photo))
