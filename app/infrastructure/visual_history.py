@@ -106,13 +106,12 @@ def _patch_difference(reference, current, box):
     a = cv2.GaussianBlur(reference[y1:y2, x1:x2], (5, 5), 0)
     b = cv2.GaussianBlur(current[y1:y2, x1:x2], (5, 5), 0)
     # Mediana reduz a influência de ruído JPEG ou reflexos em poucos pixels.
-    return float(np.median(np.abs(a.astype(np.float32) - b.astype(np.float32))))
+    return float(np.median(np.max(np.abs(a.astype(np.float32) - b.astype(np.float32)), axis=2)))
 
 
 def _patterns(reference):
     """Identidades agrupadas por aparência, dentro de cada prateleira."""
     prototypes = []
-    groups = []
     result_by_index = {}
     for item_index, item in sorted(enumerate(reference), key=lambda v: (v[1]['shelf'], v[1]['x'])):
         compatible = [(float(item["feature"] @ proto["feature"]), j)
@@ -131,7 +130,7 @@ def _patterns(reference):
             prototypes.append({"shelf": item["shelf"], "class": item["class"],
                                "feature": item["feature"].copy(),
                                "members": [item["feature"]]})
-    return groups
+    return [result_by_index[i] for i in range(len(reference))]
 
 
 
