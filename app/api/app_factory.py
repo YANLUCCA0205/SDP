@@ -23,9 +23,14 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         active = container or build_container(settings)
-        active.load_models()  # o modelo é carregado uma única vez, na inicialização (TCC 5.2)
-        app.state.container = active
-        yield
+        try:
+            active.load_models()  # o modelo é carregado uma única vez, na inicialização (TCC 5.2)
+            app.state.container = active
+            yield
+        finally:
+            # No Windows, conexões SQLite abertas impedem a remoção de bancos temporários.
+            if active.db_engine is not None:
+                active.db_engine.dispose()
 
     app = FastAPI(title="SDP - Detecção de Produtos", description=DESCRIPTION, version="1.0.0", lifespan=lifespan)
     app.include_router(router)

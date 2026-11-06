@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from sqlalchemy.engine import Engine
+
 from app.application.analyze_image import AnalyzeImage
 from app.application.rupture_report import RuptureReport
 from app.application.track_rupture import TrackRupture
@@ -12,6 +14,7 @@ from app.config import Settings
 from app.domain.flow import FlowThresholds
 from app.domain.ports import ShiftRepository
 from app.infrastructure.file_store import FileImageStore
+from app.infrastructure.capture_store import CaptureStore
 from app.infrastructure.opencv_codec import OpenCvCodec
 from app.infrastructure.shelf_config import YamlShelfProfiles
 from app.infrastructure.sql_repositories import (
@@ -32,6 +35,8 @@ class Container:
     shelf_profiles: YamlShelfProfiles
     product_detector: YoloDetector
     people_detector: YoloDetector | None
+    captures: CaptureStore | None = None
+    db_engine: Engine | None = None
 
     def load_models(self) -> None:
         self.product_detector.load()
@@ -41,7 +46,8 @@ class Container:
 
 def build_container(settings: Settings) -> Container:
     settings.resolve(settings.data_dir).mkdir(parents=True, exist_ok=True)
-    session_factory = create_session_factory(create_sqlite_engine(settings.effective_database_url))
+    db_engine = create_sqlite_engine(settings.effective_database_url)
+    session_factory = create_session_factory(db_engine)
     events = SqlEventRepository(session_factory)
     shifts = SqlShiftRepository(session_factory)
     profiles = YamlShelfProfiles.from_file(settings.resolve(settings.shelf_config_path), settings.min_occupancy)
@@ -68,6 +74,8 @@ def build_container(settings: Settings) -> Container:
         shelf_profiles=profiles,
         product_detector=product_detector,
         people_detector=people_detector,
+        captures=CaptureStore(settings.resolve(settings.received_dir), session_factory, settings.max_upload_bytes),
+        db_engine=db_engine,
     )
 
 

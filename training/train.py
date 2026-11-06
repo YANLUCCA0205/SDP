@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import DEFAULT_DATA_YAML, PROJECT_DIR, resolve_data_yaml  # noqa: E402
+from check_dataset import check_dataset  # noqa: E402
 
 DEFAULT_BASE_WEIGHTS = PROJECT_DIR / "models" / "yolo11n.pt"
 DEFAULT_RUNS_DIR = PROJECT_DIR / "runs" / "train"
@@ -46,6 +47,11 @@ def require_file(path: Path, hint: str) -> None:
 def main() -> None:
     args = parse_args()
     require_file(args.data, "Crie o dataset conforme o README (seção de treinamento).")
+    report, names = check_dataset(args.data, ("train", "val", "test"))
+    if not report.ok:
+        sys.exit("Dataset invalido. Rode python training/check_dataset.py:\n" + "\n".join(report.problems))
+    if sum(report.instances.values()) == 0:
+        sys.exit("Dataset sem objetos anotados: nao treinar com labels vazias. Anote as fotos e confira data.yaml.")
     require_file(args.weights, "Baixe o yolo11n.pt para models/ (veja scripts/download_weights.py).")
 
     from ultralytics import YOLO

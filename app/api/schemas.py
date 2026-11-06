@@ -27,7 +27,7 @@ class DetectionOut(BaseModel):
         return cls(
             class_id=detection.class_id,
             class_name=detection.class_name,
-            confidence=detection.confidence,
+            confidence=round(detection.confidence, 4),
             bbox=BoundingBoxOut(**vars(detection.bbox)),
         )
 
