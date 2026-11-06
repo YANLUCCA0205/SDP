@@ -51,6 +51,8 @@ def build_container(settings: Settings) -> Container:
     people_detector = _people_detector(settings)
     tracker = TrackRupture(events, shifts, settings.confirmations_required)
     timezone = ZoneInfo(settings.timezone)
+    visual_history = VisualHistory(settings.resolve(settings.data_dir) / 'references', product_detector,
+                                   confirmations=settings.confirmations_required)
     analyze = AnalyzeImage(
         products=product_detector,
         people=people_detector,
@@ -60,6 +62,7 @@ def build_container(settings: Settings) -> Container:
         tracker=tracker,
         clock=lambda: datetime.now(timezone).replace(tzinfo=None),
         max_bytes=settings.max_upload_bytes,
+        visual_history=visual_history,
     )
     thresholds = FlowThresholds(settings.flow_low_max, settings.flow_medium_max)
     return Container(
@@ -70,7 +73,7 @@ def build_container(settings: Settings) -> Container:
         shelf_profiles=profiles,
         product_detector=product_detector,
         people_detector=people_detector,
-        visual_history=VisualHistory(settings.resolve(settings.data_dir) / 'references', product_detector),
+        visual_history=visual_history,
     )
 
 
