@@ -21,6 +21,7 @@ from app.infrastructure.sql_repositories import (
     create_sqlite_engine,
 )
 from app.infrastructure.yolo_detector import YoloDetector
+from app.infrastructure.visual_history import VisualHistory
 
 
 @dataclass
@@ -32,6 +33,7 @@ class Container:
     shelf_profiles: YamlShelfProfiles
     product_detector: YoloDetector
     people_detector: YoloDetector | None
+    visual_history: VisualHistory
 
     def load_models(self) -> None:
         self.product_detector.load()
@@ -68,6 +70,7 @@ def build_container(settings: Settings) -> Container:
         shelf_profiles=profiles,
         product_detector=product_detector,
         people_detector=people_detector,
+        visual_history=VisualHistory(settings.resolve(settings.data_dir) / 'references', product_detector),
     )
 
 
