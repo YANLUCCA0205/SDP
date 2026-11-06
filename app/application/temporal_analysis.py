@@ -88,14 +88,14 @@ def analyze_history(*, camera_id: str, day: str, reference_prefix: str,
     output = results_root / "temporal" / camera_id / day
     output.mkdir(parents=True, exist_ok=True)
     codec = OpenCvCodec()
-    reference_lab = cv2.GaussianBlur(cv2.cvtColor(reference, cv2.COLOR_BGR2LAB)[:, :, 0), (5, 5), 0)
+    reference_lab = cv2.GaussianBlur(cv2.cvtColor(reference, cv2.COLOR_BGR2LAB)[:, :, 0], (5, 5), 0)
     counts = {name: 0 for name in bands}
     rows = []
     for photo in photos:
         image = cv2.imread(str(photo))
         if image is None or image.shape != reference.shape:
             continue
-        now_lab = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2LAB)[:, :, 0), (5, 5), 0)
+        now_lab = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2LAB)[:, :, 0], (5, 5), 0)
         # Reutiliza a interface do detector do SDP quando os pesos ja estao carregados.
         detections = detector.detect(image) if detector is not None and detector.is_available else []
         annotated = codec.annotate(image, detections)
