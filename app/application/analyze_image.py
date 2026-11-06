@@ -78,7 +78,9 @@ class AnalyzeImage:
         people_count = self._count_people(image)
         captured_at = self._clock()
         self._persist_images(request, image, detections, captured_at)
-        shelf = self._analyze_shelf(request.camera_id, detections, captured_at, people_count)
+        # A regra legada de 60% não identifica produtos por aparência.
+        # A ruptura por histórico é calculada pela API usando VisualHistory.
+        shelf = None
         return AnalysisResult(
             camera_id=request.camera_id,
             filename=request.filename,
