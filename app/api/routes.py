@@ -9,6 +9,7 @@ from fastapi.concurrency import run_in_threadpool
 from app.api.schemas import AnalyzeResponse, ShiftIn, ShiftOut
 from app.infrastructure.capture_store import CAMERA_PATTERN
 from app.application.analyze_image import AnalyzeRequest
+from app.application.temporal_analysis import analyze_history
 from app.application.errors import InvalidImageError, ModelUnavailableError
 from app.container import Container
 from app.domain.shift import Shift
@@ -96,6 +97,30 @@ async def capture_image(
         return await run_in_threadpool(
             container.captures.receive, camera_id=camera_id,
             filename=file.filename or "", content_type=file.content_type or "", data=data,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+
+@router.post("/captures/analyze-history", summary="Analisa historico real por mascaras e YOLO")
+async def analyze_capture_history(
+    container: ContainerDep,
+    camera_id: str = Query("cam-01"),
+    day: str = Query(..., description="AAAA-MM-DD"),
+    reference_prefix: str = Query(..., description="HHMMSS da imagem de referencia"),
+) -> dict[str, Any]:
+    """Nao modifica capturas, nem registra eventos de ruptura sem validacao."""
+    try:
+        return await run_in_threadpool(
+            analyze_history,
+            camera_id=camera_id,
+            day=day,
+            reference_prefix=reference_prefix,
+            received_root=container.settings.resolve(container.settings.received_dir),
+            results_root=container.settings.resolve(container.settings.results_dir),
+            config_path=container.settings.resolve(__import__("pathlib").Path("config/temporal_shelves.yaml")),
+            detector=container.product_detector,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
