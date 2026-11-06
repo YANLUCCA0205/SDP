@@ -7,6 +7,8 @@ são identificadores visuais, não nomes comerciais/SKUs.
 from __future__ import annotations
 
 import threading
+import hashlib
+import json
 from pathlib import Path
 
 import cv2
@@ -111,20 +113,21 @@ def _patterns(reference):
     """Identidades agrupadas por aparência, dentro de cada prateleira."""
     prototypes = []
     groups = []
-    for item in reference:
+    result_by_index = {}
+    for item_index, item in sorted(enumerate(reference), key=lambda v: (v[1]['shelf'], v[1]['x'])):
         compatible = [(float(item["feature"] @ proto["feature"]), j)
                       for j, proto in enumerate(prototypes)
                       if item["shelf"] == proto["shelf"] and
                       item["class"] == proto["class"]]
         if compatible and max(compatible)[0] >= .92:
             index = max(compatible)[1]
-            groups.append(index)
+            result_by_index[item_index] = index
             proto = prototypes[index]
             proto["members"].append(item["feature"])
             vector = np.mean(proto["members"], axis=0)
             proto["feature"] = vector / (np.linalg.norm(vector) + 1e-8)
         else:
-            groups.append(len(prototypes))
+            result_by_index[item_index] = len(prototypes)
             prototypes.append({"shelf": item["shelf"], "class": item["class"],
                                "feature": item["feature"].copy(),
                                "members": [item["feature"]]})
@@ -164,14 +167,21 @@ def _align_to_reference(reference, current):
 
 
 class VisualHistory:
-    def __init__(self, directory: Path, detector):
+    def __init__(self, directory: Path, detector, confirmations: int = 2):
         self.directory = directory
         self.detector = detector
+        self.confirmations = max(1, confirmations)
         self.lock = threading.RLock()
         directory.mkdir(parents=True, exist_ok=True)
 
     def _path(self, camera_id):
+        if not camera_id or len(camera_id) > 64 or not all(ch.isascii() and (ch.isalnum() or ch in "_-") for ch in camera_id):
+            raise ValueError("camera_id inválido")
         return self.directory / f"{camera_id}.jpg"
+
+    def _state_path(self, camera_id):
+        self._path(camera_id)
+        return self.directory / f"{camera_id}.json"
 
     def save_reference(self, camera_id: str, data: bytes) -> dict:
         image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
@@ -193,10 +203,11 @@ class VisualHistory:
                 if not ok:
                     raise ValueError("Falha ao codificar referência")
                 self._path(camera_id).write_bytes(jpg.tobytes())
+            self._state_path(camera_id).write_text(json.dumps({"counters": {}, "events": [], "frames": []}), encoding="utf-8")
         return {"camera_id": camera_id, "referencia_salva": True,
                 "objetos_referencia": len(objects)}
 
-    def analyze(self, camera_id: str, current_image: np.ndarray, current_detections) -> dict:
+    def analyze(self, camera_id: str, current_image: np.ndarray, current_detections, filename: str = "") -> dict:
         path = self._path(camera_id)
         with self.lock:
             if not path.is_file():
@@ -225,10 +236,11 @@ class VisualHistory:
         if not ref:
             return {"status": "referencia_sem_deteccoes", "tem_ruptura": None, "rupturas": []}
         if global_diff < 2.5:
-            return {"status": "ok", "tem_ruptura": False, "rupturas": [],
-                    "objetos_referencia": len(ref), "objetos_atuais": len(ref),
-                    "objetos_sem_tipo": 0, "deslocamento_pixels": deslocamento,
-                    "observacao": "Cena equivalente ao histórico"}
+            return self._track(camera_id, current_image, filename, {
+                "status": "ok", "tem_ruptura": False, "rupturas": [],
+                "objetos_referencia": len(ref), "objetos_atuais": len(ref),
+                "objetos_sem_tipo": 0, "deslocamento_pixels": deslocamento,
+                "observacao": "Cena equivalente ao histórico"})
         cur = _objects(aligned, self.detector.detect(aligned))
 
         _shelves(ref, cur)
@@ -269,7 +281,7 @@ class VisualHistory:
         # A ausência de detecção com mudança de cena não confirma remoção.
         # Expor uma decisão positiva somente para regiões claras, sem objetos.
         status = "indeterminado" if uncertain else "ok"
-        return {"status": status,
+        return self._track(camera_id, current_image, filename, {"status": status,
                 "tem_ruptura": None if uncertain else bool(ruptures),
                 "rupturas": ruptures, "objetos_referencia": len(ref),
                 "objetos_atuais": len(cur),
@@ -278,4 +290,60 @@ class VisualHistory:
                 "confianca_alinhamento": registration_score,
                 "deslocamento_pixels": deslocamento,
                 "observacao": "Rupturas estimadas por comparação espacial e visual. "
-                              "Atribuição é por padrão visual, não por SKU."}
+                              "Atribuição é por padrão visual, não por SKU."})
+
+    def _track(self, camera_id: str, image: np.ndarray, filename: str, result: dict) -> dict:
+        """Avança o estado apenas em capturas distintas e com análise determinada."""
+        with self.lock:
+            state_path = self._state_path(camera_id)
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                state = {"counters": {}, "events": [], "frames": []}
+            fingerprint = hashlib.sha256(image.tobytes() + filename.encode("utf-8")).hexdigest()[:24]
+            if state.get("fingerprint") == fingerprint:
+                return state["last_result"]
+
+            result["eventos"] = []
+            if result.get("status") == "indeterminado":
+                result["tem_ruptura"] = None
+                return result  # não encerrar ou confirmar eventos em capturas incertas
+
+            active = {entry["produto"] for entry in result["rupturas"]}
+            counters = state.setdefault("counters", {})
+            all_products = active | set(counters)
+            for product in sorted(all_products):
+                counter = counters.setdefault(product, {"consecutive": 0, "open": False})
+                if product in active:
+                    counter["consecutive"] += 1
+                    if not counter["open"] and counter["consecutive"] >= self.confirmations:
+                        counter["open"] = True
+                        event = {"acao": "ruptura_confirmada", "produto": product, "captura": filename}
+                        state.setdefault("events", []).append(event)
+                        result["eventos"].append(event)
+                else:
+                    if counter["open"]:
+                        event = {"acao": "reposicao_observada", "produto": product, "captura": filename}
+                        state.setdefault("events", []).append(event)
+                        result["eventos"].append(event)
+                    counter["consecutive"] = 0
+                    counter["open"] = False
+
+            for item in result["rupturas"]:
+                item["confirmada"] = counters[item["produto"]]["open"]
+            confirmed = any(item["confirmada"] for item in result["rupturas"])
+            result["tem_ruptura"] = confirmed
+            result["status"] = "ruptura" if confirmed else ("possivel_ruptura" if active else "ok")
+            result["observacao_temporal"] = "Duas capturas distintas são exigidas para confirmar ausência visual."
+            state["fingerprint"] = fingerprint
+            state["last_result"] = result
+            state.setdefault("frames", []).append({"captura": filename, "status": result["status"]})
+            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            return result
+
+    def events(self, camera_id: str) -> list[dict]:
+        with self.lock:
+            state_path = self._state_path(camera_id)
+            if not state_path.exists():
+                return []
+            return json.loads(state_path.read_text(encoding="utf-8")).get("events", [])
