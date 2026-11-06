@@ -118,6 +118,7 @@ há *fallback* silencioso.
 |---|---|---|
 | GET | `/` | Health check: estado dos modelos e câmeras configuradas |
 | POST | `/analyze?camera_id=cam-01` | `multipart/form-data`, campo `file` (`image/jpeg` ou `image/png`) |
+| POST | `/reference?camera_id=cam-01` | Define a imagem abastecida usada como referência visual |
 | GET | `/ruptures` | Eventos confirmados (`camera_id`, `only_open`, `include_pending`, `limit`) |
 | GET | `/ruptures/export.csv` | Mesmos eventos em CSV (colunas do TCC 2.5-b) |
 | POST/GET/DELETE | `/shifts`, `/shifts/{id}` | Escala de funcionários |
@@ -130,21 +131,37 @@ não decodificável, `camera_id` inválido — sempre com `detail`), **413** (ac
 curl -X POST "http://localhost:5000/analyze?camera_id=cam-01" -F "file=@teste.jpeg;type=image/jpeg"
 ```
 
-Formato da resposta 200 (ilustrativo — a estrutura é a implementada; os valores dependem do modelo e da imagem):
+`/analyze` também retorna `ruptura_visual`. A comparação usa o YOLO para localizar objetos e agrupa padrões pela
+posição e aparência; a área é aproximada pela caixa detectada, não por segmentação. Um frame isolado com região vazia
+é uma **suspeita**, não uma ruptura temporal confirmada. Nesta etapa, esse resultado visual ainda não é gravado em
+`/ruptures`; essa rota lista os eventos mantidos pelo fluxo de persistência existente.
+
+Cadastre a referência antes de analisar as capturas:
+
+```powershell
+curl.exe -F "file=@received\cam-01\2026-11-03\221557_887874_0d69cf17172b4ae8a711ccadbb4f701a.jpg;type=image/jpeg" "http://localhost:5000/reference?camera_id=cam-01"
+curl.exe -F "file=@received\cam-01\2026-11-03\221802_700732_bd1dd16c77ae4327878c08f5446ecfd4.jpg;type=image/jpeg" "http://localhost:5000/analyze?camera_id=cam-01"
+```
+
+Formato da resposta 200 (ilustrativo — os valores dependem do modelo e da imagem):
 
 ```json
 {
   "status": "ok", "filename": "teste.jpeg", "detections_count": 1, "camera_id": "cam-01", "people_count": 2,
   "detections": [{"class_id": 0, "class_name": "produto_1", "confidence": 0.8731,
                   "bbox": {"x1": 102.4, "y1": 55.0, "x2": 180.9, "y2": 210.3}}],
-  "shelf": {"aisle": "C10", "min_occupancy": 0.6, "unmonitored_classes": [],
-            "products": [{"class_name": "produto_1", "category": "Categoria A", "detected": 1, "required": 6,
-                          "state": "possivel_ruptura", "rupture_id": 12, "rupture_confirmed": false}]}
+  "shelf": null,
+  "ruptura_visual": {
+    "status": "suspeita", "tem_ruptura": true,
+    "rupturas": [{"produto": "padrao_026", "area_referencia_px": 3243, "area_ausente_px": 3243,
+                  "ocupacao_percentual": 0.0, "ruptura_percentual": 100.0}]
+  }
 }
 ```
 
-`shelf` é `null` quando a câmera não tem perfil em `config/shelves.yaml`. `people_count` é `null` se o modelo de pessoas
-não estiver disponível.
+`shelf` é `null` na comparação visual por histórico. `people_count` é `null` se o modelo de pessoas não estiver
+disponível. `ruptura_percentual` é a fração estimada da área de referência ausente; o cálculo usa caixas delimitadoras
+do YOLO, portanto é uma aproximação.
 
 Escala (exemplo): `POST /shifts` com
 `{"employee":"Ana","aisle":"C10","starts_at":"2026-06-10T07:00:00","ends_at":"2026-06-10T15:00:00"}`.
@@ -220,10 +237,10 @@ host. Porta 5000. Imagem `python:3.11-slim`, PyTorch CPU por padrão (argumento 
 
 ## Firmware (ESP32-CAM)
 
-O `conf-cam.ino` do TCC **não foi alterado** (não faz parte do backend) e continua funcionando: sem `camera_id`, vale
-`SDP_DEFAULT_CAMERA_ID`. Com **várias câmeras**, basta gravar em cada uma o caminho do endpoint com seu identificador
-(a constante de caminho já existe no topo do firmware): `/analyze?camera_id=cam-02`. Pendências do firmware citadas no
-TCC (credenciais fixas, descarte dos primeiros quadros) continuam em aberto.
+O firmware recuperado está em `esp32-cam/conf-cam.ino`. Ele envia para `/captures?camera_id=cam-01`, endpoint que
+**não existe nesta branch**; a API atual recebe imagens por `/analyze`. Portanto, o firmware ainda não deve ser usado
+para validar a ruptura nesta versão. Primeiro valide a sequência de imagens já capturada; depois alinhe o firmware e a
+API. Preencha SSID, senha e endereço do servidor localmente antes de compilar; não versione credenciais.
 
 ## Problemas comuns
 

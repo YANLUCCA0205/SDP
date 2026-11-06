@@ -22,6 +22,30 @@ def _iou(a, b):
     return intersection / max(1, area_a + area_b - intersection)
 
 
+def _box_area(box):
+    return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+
+
+def _area_summary(reference_area, missing_area):
+    if reference_area <= 0:
+        return {
+            "area_referencia_px": 0,
+            "area_atual_estimada_px": 0,
+            "area_ausente_px": 0,
+            "ocupacao_percentual": 0.0,
+            "ruptura_percentual": 0.0,
+        }
+    missing_area = min(reference_area, max(0, missing_area))
+    missing_percent = round(100 * missing_area / reference_area, 2)
+    return {
+        "area_referencia_px": reference_area,
+        "area_atual_estimada_px": reference_area - missing_area,
+        "area_ausente_px": missing_area,
+        "ocupacao_percentual": round(100 - missing_percent, 2),
+        "ruptura_percentual": missing_percent,
+    }
+
+
 def _objects(image, detections):
     height, width = image.shape[:2]
     objects = []
@@ -257,6 +281,15 @@ class VisualHistory:
             counts[pattern_id] = counts.get(pattern_id, 0) + 1
         ruptures = []
         for pattern_id, positions in sorted(missing.items()):
+            reference_area = sum(
+                _box_area(item["box"])
+                for i, item in enumerate(ref)
+                if patterns[i] == pattern_id
+            )
+            area = _area_summary(
+                reference_area,
+                sum(_box_area(position["box"]) for position in positions),
+            )
             ruptures.append({
                 "produto": f"padrao_{pattern_id+1:03d}",
                 "prateleira": next(ref[i]["shelf"] for i in range(len(ref))
@@ -264,13 +297,20 @@ class VisualHistory:
                 "esperado": counts[pattern_id],
                 "encontrado": max(0, counts[pattern_id] - len(positions)),
                 "faltando": len(positions),
+                **area,
                 "posicoes_historicas": [position["box"] for position in positions],
             })
-        # A ausência de detecção com mudança de cena não confirma remoção.
-        # Expor uma decisão positiva somente para regiões claras, sem objetos.
-        status = "indeterminado" if uncertain else "ok"
+        if ruptures:
+            status = "suspeita"
+            has_rupture = True
+        elif uncertain:
+            status = "indeterminado"
+            has_rupture = None
+        else:
+            status = "ok"
+            has_rupture = False
         return {"status": status,
-                "tem_ruptura": None if uncertain else bool(ruptures),
+                "tem_ruptura": has_rupture,
                 "rupturas": ruptures, "objetos_referencia": len(ref),
                 "objetos_atuais": len(cur),
                 "objetos_sem_tipo": len(cur) - len(used),
@@ -278,4 +318,4 @@ class VisualHistory:
                 "confianca_alinhamento": registration_score,
                 "deslocamento_pixels": deslocamento,
                 "observacao": "Rupturas estimadas por comparação espacial e visual. "
-                              "Atribuição é por padrão visual, não por SKU."}
+                              "Área aproximada pela caixa detectada; atribuição por padrão visual, não por SKU."}
