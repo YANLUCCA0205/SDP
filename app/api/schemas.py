@@ -57,6 +57,7 @@ class AnalyzeResponse(BaseModel):
     camera_id: str
     people_count: int | None = None
     shelf: ShelfOut | None = None
+    ruptura_visual: dict | None = None
 
     @classmethod
     def from_result(cls, result: AnalysisResult) -> AnalyzeResponse:
@@ -68,6 +69,7 @@ class AnalyzeResponse(BaseModel):
             camera_id=result.camera_id,
             people_count=result.people_count,
             shelf=_shelf_out(result),
+            ruptura_visual=result.ruptura_visual,
         )
 
 

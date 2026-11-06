@@ -1,5 +1,34 @@
 # SDP — Sistema de Detecção de Produtos
 
+## Atualização experimental - 06/11/2026
+
+O detector de produtos usa `models/best.pt` treinado para a classe genérica
+`object`. Os agrupamentos visuais são gerados **depois** da inferência por
+`app/infrastructure/visual_history.py` e acionados pelo caso de uso
+`app/application/analyze_image.py`.
+
+Fluxo: ESP32-CAM -> API -> YOLO -> referência por câmera -> padrões visuais
+por prateleira -> comparação espacial -> confirmação em 2 capturas distintas ->
+evento de ausência / reposição.
+
+1. Inicie a API com `uvicorn main:app --host 0.0.0.0 --port 5000`.
+2. Cadastre uma foto de referência com `POST /reference?camera_id=cam-01`.
+   **Cadastrar nova referência reinicializa os estados temporais dessa câmera.**
+3. Envie capturas em **ordem cronológica** a `POST /analyze?camera_id=cam-01`.
+4. O campo `ruptura_visual` diferencia `ok`, `possivel_ruptura`,
+   `ruptura` e `indeterminado`; `eventos` lista confirmação e retorno.
+
+A decisão é relativa à disposição visível na referência, não ao estoque total
+da loja nem a identificação comercial/SKU. A funcionalidade temporal revisada
+ainda precisa ser executada e calibrada no notebook com as 13 imagens reais.
+Um ensaio sintético com detector simulado demonstrou os estados
+presença -> retirada -> confirmação -> reposição; **isso não é precisão do YOLO**.
+
+**Atenção:** as rotas legadas de `/ruptures` e o banco SQLite de turnos ainda
+não foram unificados com o registro temporal JSON de `data/references`.
+Não misture as fontes como se fossem os mesmos eventos.
+
+
 Backend do TCC *Sistemas de Detecção de Produtos Utilizando Visão Computacional e Redes Neurais Convolucionais*
 (Universidade de Uberaba). Câmeras ESP32-CAM enviam imagens de gôndolas por HTTP; a API detecta produtos com
 **Ultralytics YOLO11**, aplica a regra de **ruptura de gôndola** e registra eventos (início, fim, duração, corredor,

@@ -46,6 +46,7 @@ class AnalysisResult:
     detections: tuple[Detection, ...]
     people_count: int | None
     shelf: ShelfAnalysis | None
+    ruptura_visual: dict | None = None
 
 
 class AnalyzeImage:
@@ -60,6 +61,7 @@ class AnalyzeImage:
         tracker: TrackRupture,
         clock: Callable[[], datetime],
         max_bytes: int,
+        visual_history=None,
     ) -> None:
         self._products = products
         self._people = people
@@ -69,6 +71,7 @@ class AnalyzeImage:
         self._tracker = tracker
         self._clock = clock
         self._max_bytes = max_bytes
+        self._visual_history = visual_history
 
     def execute(self, request: AnalyzeRequest) -> AnalysisResult:
         self._validate(request)
@@ -81,12 +84,15 @@ class AnalyzeImage:
         # A regra legada de 60% não identifica produtos por aparência.
         # A ruptura por histórico é calculada pela API usando VisualHistory.
         shelf = None
+        visual = (self._visual_history.analyze(request.camera_id, image, detections, request.filename)
+                  if self._visual_history is not None else None)
         return AnalysisResult(
             camera_id=request.camera_id,
             filename=request.filename,
             detections=tuple(detections),
             people_count=people_count,
             shelf=shelf,
+            ruptura_visual=visual,
         )
 
     def _validate(self, request: AnalyzeRequest) -> None:

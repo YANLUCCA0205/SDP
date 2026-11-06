@@ -75,12 +75,7 @@ async def analyze(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ModelUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    output = AnalyzeResponse.from_result(result).model_dump()
-    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-    output["ruptura_visual"] = await run_in_threadpool(
-        container.visual_history.analyze, camera_id, image, result.detections
-    )
-    return output
+    return AnalyzeResponse.from_result(result).model_dump()
 
 
 @router.post("/reference", summary="Define imagem histórica da gôndola abastecida")
